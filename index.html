@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f1ea">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Outfit Studio">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <title>Outfit Studio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell" id="app">
+
+  <header class="app-header">
+    <h1 class="brand">Outfit Studio</h1>
+    <span class="app-date" id="app-date"></span>
+  </header>
+
+  <main class="app-main" id="main">
+
+    <!-- ============ TODAY ============ -->
+    <section class="tab-panel is-active" id="tab-today" data-panel="today" aria-labelledby="today-title">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow" id="today-date"></p>
+          <h2 id="today-title">Today</h2>
+        </div>
+      </div>
+
+      <div class="card context-bar" id="today-context">
+        <div class="field">
+          <span class="label">Occasion</span>
+          <div class="chip-row" id="today-occasions" role="group" aria-label="Occasion"></div>
+        </div>
+        <div class="field">
+          <div class="label-row">
+            <label class="label" for="today-temp">Temperature</label>
+            <span class="label-value"><output id="today-temp-out">18</output> <span id="today-season-label" class="muted"></span></span>
+          </div>
+          <div class="temp-row">
+            <input type="range" id="today-temp" min="-10" max="40" step="1" value="18">
+            <div class="segmented segmented-sm" id="today-units" role="group" aria-label="Units">
+              <button type="button" data-unit="C" class="is-active">&deg;C</button>
+              <button type="button" data-unit="F">&deg;F</button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Vibe</span>
+          <div class="segmented" id="today-vibes" role="group" aria-label="Vibe"></div>
+        </div>
+        <button type="button" class="btn btn-primary btn-block" id="today-generate">Generate</button>
+      </div>
+
+      <div id="today-empty" class="empty" hidden></div>
+      <div id="today-suggestions" class="suggestion-list" aria-live="polite"></div>
+
+      <div class="section-head">
+        <h3>This week</h3>
+        <span class="muted small" id="week-range"></span>
+      </div>
+      <div class="week-strip" id="today-week"></div>
+    </section>
+
+    <!-- ============ WARDROBE ============ -->
+    <section class="tab-panel" id="tab-wardrobe" data-panel="wardrobe" aria-labelledby="wardrobe-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow"><span id="wardrobe-count">0</span> items</p>
+          <h2 id="wardrobe-title">Wardrobe</h2>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="icon-btn" id="open-settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          </button>
+          <button type="button" class="btn btn-sm" id="wardrobe-scan">Scan flat-lay</button>
+          <button type="button" class="btn btn-primary btn-sm" id="wardrobe-add">+ Add</button>
+        </div>
+      </div>
+
+      <details class="card stats-card" id="wardrobe-stats-wrap">
+        <summary>Stats</summary>
+        <div id="wardrobe-stats" class="stats-body"></div>
+      </details>
+
+      <div class="search-box">
+        <input type="search" id="wardrobe-search" placeholder="Search name, tags, notes" autocomplete="off" aria-label="Search wardrobe">
+      </div>
+
+      <div class="filters" id="wardrobe-filters">
+        <div class="chip-row chip-scroll" id="filter-category" role="group" aria-label="Category"></div>
+        <div class="chip-row chip-scroll" id="filter-color" role="group" aria-label="Color family"></div>
+        <div class="chip-row chip-scroll" id="filter-season" role="group" aria-label="Season"></div>
+        <div class="field field-inline">
+          <label class="label" for="filter-formality">Formality</label>
+          <select id="filter-formality">
+            <option value="">Any</option>
+            <option value="1">1 Loungewear</option>
+            <option value="2">2 Casual</option>
+            <option value="3">3 Smart casual</option>
+            <option value="4">4 Business</option>
+            <option value="5">5 Formal</option>
+          </select>
+          <button type="button" class="btn btn-link" id="filter-clear">Clear filters</button>
+        </div>
+      </div>
+
+      <div id="wardrobe-empty" class="empty" hidden></div>
+      <div id="wardrobe-grid" class="item-grid"></div>
+    </section>
+
+    <!-- ============ STUDIO ============ -->
+    <section class="tab-panel" id="tab-studio" data-panel="studio" aria-labelledby="studio-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Build an outfit</p>
+          <h2 id="studio-title">Studio</h2>
+        </div>
+        <div class="score-badge" id="studio-score" aria-live="polite">
+          <span class="score-num">--</span><span class="score-max">/100</span>
+        </div>
+      </div>
+
+      <div class="canvas" id="studio-canvas" aria-label="Outfit canvas">
+        <div class="slot slot-outerwear" data-slot="outerwear"></div>
+        <div class="slot slot-dress" data-slot="dress"></div>
+        <div class="slot slot-top" data-slot="top"></div>
+        <div class="slot slot-bottom" data-slot="bottom"></div>
+        <div class="slot slot-shoes" data-slot="shoes"></div>
+        <div class="slot slot-accessory" data-slot="accessory"></div>
+        <p class="canvas-hint" id="studio-hint">Pick pieces or press Randomize</p>
+      </div>
+
+      <details class="card score-detail" id="studio-breakdown-wrap">
+        <summary>Score breakdown and tips</summary>
+        <div id="studio-breakdown"></div>
+        <ul class="tips" id="studio-tips"></ul>
+      </details>
+
+      <div class="btn-row">
+        <button type="button" class="btn" id="studio-randomize">Randomize</button>
+        <button type="button" class="btn" id="studio-suggest">Suggest</button>
+        <button type="button" class="btn" id="studio-clear">Clear</button>
+        <button type="button" class="btn btn-primary" id="studio-save">Save</button>
+      </div>
+
+      <div class="section-head">
+        <h3>Saved outfits</h3>
+      </div>
+      <div class="chip-row chip-scroll" id="studio-folders" role="tablist" aria-label="Folders"></div>
+      <div id="studio-folder-actions" class="folder-actions" hidden>
+        <button type="button" class="btn btn-link" id="folder-rename">Rename folder</button>
+        <button type="button" class="btn btn-link btn-danger-link" id="folder-delete">Delete folder</button>
+      </div>
+      <div id="studio-empty" class="empty" hidden></div>
+      <div id="studio-outfits" class="outfit-grid"></div>
+    </section>
+
+    <!-- ============ RATE ============ -->
+    <section class="tab-panel" id="tab-rate" data-panel="rate" aria-labelledby="rate-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Heuristic score</p>
+          <h2 id="rate-title">Rate my look</h2>
+        </div>
+      </div>
+
+      <div class="segmented segmented-full" id="rate-mode" role="group" aria-label="Input mode">
+        <button type="button" data-mode="items" class="is-active">Pick items</button>
+        <button type="button" data-mode="outfit">Saved outfit</button>
+      </div>
+
+      <div id="rate-items" class="rate-pane">
+        <div class="rate-slots" id="rate-slots"></div>
+      </div>
+      <div id="rate-outfits" class="rate-pane" hidden>
+        <div class="outfit-pick-list" id="rate-outfit-list"></div>
+      </div>
+
+      <details class="card" id="rate-context">
+        <summary>Add context</summary>
+        <div class="field">
+          <label class="label" for="rate-occasion">Occasion</label>
+          <select id="rate-occasion">
+            <option value="">None</option>
+            <option value="casual">Casual</option>
+            <option value="work">Work</option>
+            <option value="date">Date</option>
+            <option value="formal">Formal</option>
+            <option value="athletic">Athletic</option>
+            <option value="travel">Travel</option>
+            <option value="party">Party</option>
+          </select>
+        </div>
+        <div class="field">
+          <div class="label-row">
+            <label class="label" for="rate-temp">Temperature</label>
+            <span class="label-value"><output id="rate-temp-out">Not set</output></span>
+          </div>
+          <input type="range" id="rate-temp" min="-10" max="40" step="1" value="18">
+          <label class="check"><input type="checkbox" id="rate-temp-on"> Use temperature</label>
+        </div>
+      </details>
+
+      <details class="card selfie-card">
+        <summary>Selfie (optional)</summary>
+        <p class="muted small">Preview only, no analysis. Scoring uses the items you pick.</p>
+        <label class="btn btn-block file-btn" for="rate-photo">Snap or upload a photo</label>
+        <input type="file" id="rate-photo" accept="image/*" capture="user" class="visually-hidden">
+        <div class="photo-preview" id="rate-photo-preview" hidden>
+          <img id="rate-photo-img" alt="Selfie preview">
+        </div>
+        <button type="button" class="btn btn-block" id="rate-add-wardrobe" hidden>Add what I'm wearing to wardrobe</button>
+      </details>
+
+      <button type="button" class="btn btn-primary btn-block" id="rate-go" disabled>Rate</button>
+
+      <div id="rate-empty" class="empty">Choose at least two pieces to rate.</div>
+
+      <div id="rate-result" class="card rate-result" hidden aria-live="polite">
+        <div class="rate-hero">
+          <div class="rate-score"><span id="rate-score-num">0.0</span><span class="rate-score-max"> / 10</span></div>
+          <p class="rate-verdict" id="rate-verdict"></p>
+        </div>
+        <div id="rate-breakdown" class="breakdown"></div>
+        <h3 class="sub-title">How to improve</h3>
+        <ul class="tips" id="rate-tips"></ul>
+        <div class="btn-row">
+          <button type="button" class="btn" id="rate-open-studio">Open in Studio</button>
+          <button type="button" class="btn btn-primary" id="rate-save">Save as outfit</button>
+        </div>
+      </div>
+      <p class="footnote">Heuristic score, not AI. Rules explained above.</p>
+    </section>
+
+    <!-- ============ SHOP ============ -->
+    <section class="tab-panel" id="tab-shop" data-panel="shop" aria-labelledby="shop-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Wardrobe gaps</p>
+          <h2 id="shop-title">Shop</h2>
+        </div>
+      </div>
+
+      <div id="shop-empty" class="empty" hidden></div>
+
+      <div class="card" id="shop-health">
+        <p class="health-line" id="shop-health-line"></p>
+        <div class="progress"><div class="progress-bar" id="shop-health-bar"></div></div>
+      </div>
+
+      <div class="section-head"><h3>Missing basics</h3></div>
+      <ul class="checklist" id="shop-basics"></ul>
+
+      <div class="section-head"><h3>Suggested pieces</h3></div>
+      <div id="shop-suggestions" class="suggestion-list"></div>
+
+      <div class="section-head"><h3>Balance</h3></div>
+      <div class="card" id="shop-balance"></div>
+
+      <div class="section-head"><h3>Style a piece you're considering</h3></div>
+      <form class="card" id="shop-consider-form" autocomplete="off">
+        <div class="field">
+          <label class="label" for="consider-category">Category</label>
+          <select id="consider-category" name="category">
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="dress">Dress</option>
+            <option value="outerwear">Outerwear</option>
+            <option value="shoes">Shoes</option>
+            <option value="accessory">Accessory</option>
+          </select>
+        </div>
+        <div class="field field-row">
+          <div>
+            <label class="label" for="consider-color">Color</label>
+            <input type="color" id="consider-color" name="color" value="#3b4a6b">
+          </div>
+          <div class="grow">
+            <label class="label" for="consider-formality">Formality <output id="consider-formality-out">3</output></label>
+            <input type="range" id="consider-formality" name="formality" min="1" max="5" step="1" value="3">
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="consider-photo">Photo (optional)</label>
+          <input type="file" id="consider-photo" accept="image/*" capture="environment">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Style it</button>
+      </form>
+      <div id="shop-consider-result" class="consider-result" hidden></div>
+
+      <div class="section-head"><h3>Wishlist</h3></div>
+      <div id="shop-wishlist" class="wishlist"></div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar" id="tabbar" aria-label="Main">
+    <button type="button" class="tab is-active" data-tab="today" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <span>Today</span>
+    </button>
+    <button type="button" class="tab" data-tab="wardrobe">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6a2 2 0 1 0-2-2"/><path d="M12 6v2l9 6a1.5 1.5 0 0 1-.8 2.7H3.8A1.5 1.5 0 0 1 3 14l9-6"/></svg>
+      <span>Wardrobe</span>
+    </button>
+    <button type="button" class="tab" data-tab="studio">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M9 9v12"/></svg>
+      <span>Studio</span>
+    </button>
+    <button type="button" class="tab" data-tab="rate">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>
+      <span>Rate</span>
+    </button>
+    <button type="button" class="tab" data-tab="shop">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+      <span>Shop</span>
+    </button>
+  </nav>
+
+  <!-- ============ MODALS / SHEETS ============ -->
+
+  <!-- Scan flat-lay -->
+  <div class="sheet-backdrop" id="scan-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="scan-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="scan-title">Scan flat-lay</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body">
+        <div id="scan-step-intro">
+          <p>Lay several pieces out flat with small gaps between them, on a plain bed or floor. Take one photo — each separated piece becomes its own wardrobe item with the background removed.</p>
+          <div class="btn-row btn-row-tight">
+            <button type="button" class="btn btn-primary" id="scan-photo-take">Take photo</button>
+            <input type="file" id="scan-photo-camera" accept="image/*" capture="environment" class="visually-hidden">
+            <label class="btn file-btn" for="scan-photo">Choose photo</label>
+            <input type="file" id="scan-photo" accept="image/*" class="visually-hidden">
+          </div>
+        </div>
+        <div id="scan-step-busy" hidden role="status" aria-live="polite">
+          <p class="muted">Finding pieces and removing backgrounds…</p>
+          <div class="bar"><div class="bar-fill scan-progress"></div></div>
+        </div>
+        <div id="scan-step-empty" hidden>
+          <p><strong>Nothing separated was detected.</strong> The pieces may be touching, or blend into the background. Leave small gaps and use a plain, contrasting surface.</p>
+          <div class="btn-row btn-row-tight">
+            <button type="button" class="btn" id="scan-whole">Add the whole photo as one item</button>
+            <button type="button" class="btn btn-primary" id="scan-retry">Try again</button>
+          </div>
+        </div>
+        <div id="scan-step-review" hidden>
+          <p class="small muted" id="scan-count"></p>
+          <div id="scan-cards" class="scan-cards"></div>
+          <div class="btn-row btn-row-tight scan-rescan">
+            <button type="button" class="btn btn-sm" id="scan-more">Rescan — more sensitive</button>
+            <button type="button" class="btn btn-sm" id="scan-less">Rescan — less sensitive</button>
+          </div>
+          <div class="sheet-foot">
+            <button type="button" class="btn" data-close>Cancel</button>
+            <span class="grow"></span>
+            <button type="button" class="btn btn-primary" id="scan-add">Add 0 selected items</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add / Edit item -->
+  <div class="sheet-backdrop" id="item-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="item-modal-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="item-modal-title">Add item</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <form id="item-form" class="sheet-body" autocomplete="off">
+        <input type="hidden" id="item-id" name="id">
+
+        <div class="field">
+          <span class="label">Photo</span>
+          <div class="photo-preview" id="item-photo-preview" hidden>
+            <img id="item-photo-img" alt="Item photo preview">
+          </div>
+          <p class="small muted" id="item-photo-note" hidden></p>
+          <button type="button" class="btn btn-block" id="item-photo-toggle" hidden>Use original photo instead</button>
+          <div class="btn-row btn-row-tight">
+            <button type="button" class="btn" id="item-photo-take">Take photo</button>
+            <input type="file" id="item-photo-camera" accept="image/*" capture="environment" class="visually-hidden">
+            <label class="btn file-btn" for="item-photo">Choose photo</label>
+            <input type="file" id="item-photo" name="photo" accept="image/*" class="visually-hidden">
+            <button type="button" class="btn" id="item-catalog-btn">Choose from catalog</button>
+            <button type="button" class="btn btn-link" id="item-photo-remove" hidden>Remove photo</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="item-name">Name</label>
+          <input type="text" id="item-name" name="name" required maxlength="60" placeholder="White Oxford Shirt">
+        </div>
+
+        <div class="field">
+          <label class="label" for="item-category">Category</label>
+          <select id="item-category" name="category" required>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="dress">Dress</option>
+            <option value="outerwear">Outerwear</option>
+            <option value="shoes">Shoes</option>
+            <option value="accessory">Accessory</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <span class="label">Color</span>
+          <div class="color-row">
+            <input type="color" id="item-color" name="color" value="#f5f5f0" aria-label="Color">
+            <span class="swatch" id="item-swatch"></span>
+            <div class="grow">
+              <label class="label label-sm" for="item-family">Family</label>
+              <select id="item-family" name="colorFamily">
+                <option value="black">Black</option>
+                <option value="white">White</option>
+                <option value="gray">Gray</option>
+                <option value="cream">Cream</option>
+                <option value="tan">Tan</option>
+                <option value="brown">Brown</option>
+                <option value="navy">Navy</option>
+                <option value="red">Red</option>
+                <option value="orange">Orange</option>
+                <option value="yellow">Yellow</option>
+                <option value="green">Green</option>
+                <option value="teal">Teal</option>
+                <option value="blue">Blue</option>
+                <option value="purple">Purple</option>
+                <option value="pink">Pink</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint" id="item-family-display">Auto-detected family: <strong id="item-family-auto">white</strong></p>
+        </div>
+
+        <fieldset class="field fieldset">
+          <legend class="label">Seasons</legend>
+          <div class="check-row" id="item-seasons">
+            <label class="check"><input type="checkbox" name="seasons" value="spring" checked> Spring</label>
+            <label class="check"><input type="checkbox" name="seasons" value="summer" checked> Summer</label>
+            <label class="check"><input type="checkbox" name="seasons" value="fall" checked> Fall</label>
+            <label class="check"><input type="checkbox" name="seasons" value="winter" checked> Winter</label>
+          </div>
+        </fieldset>
+
+        <div class="field">
+          <div class="label-row">
+            <label class="label" for="item-formality">Formality</label>
+            <span class="label-value"><output id="item-formality-out">3</output> <span class="muted" id="item-formality-name">Smart casual</span></span>
+          </div>
+          <input type="range" id="item-formality" name="formality" min="1" max="5" step="1" value="3">
+        </div>
+
+        <div class="field">
+          <div class="label-row">
+            <label class="label" for="item-warmth">Warmth</label>
+            <span class="label-value"><output id="item-warmth-out">1</output> <span class="muted" id="item-warmth-name">Light</span></span>
+          </div>
+          <input type="range" id="item-warmth" name="warmth" min="1" max="3" step="1" value="1">
+        </div>
+
+        <div class="field">
+          <label class="label" for="item-tags">Tags</label>
+          <input type="text" id="item-tags" name="tags" placeholder="cotton, work (comma separated)">
+        </div>
+
+        <div class="field">
+          <label class="label" for="item-notes">Notes</label>
+          <textarea id="item-notes" name="notes" rows="3" maxlength="300"></textarea>
+        </div>
+
+        <div class="sheet-foot">
+          <button type="button" class="btn btn-danger" id="item-delete" hidden>Delete</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Catalog picker -->
+  <div class="sheet-backdrop" id="catalog-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="catalog-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="catalog-title">Starter catalog</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body" id="catalog-list"></div>
+    </div>
+  </div>
+
+  <!-- Item detail -->
+  <div class="sheet-backdrop" id="detail-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="detail-title">Item</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body" id="detail-body"></div>
+      <div class="sheet-foot">
+        <button type="button" class="btn btn-danger" id="detail-delete">Delete</button>
+        <span class="grow"></span>
+        <button type="button" class="btn" id="detail-studio">Add to Studio</button>
+        <button type="button" class="btn btn-primary" id="detail-edit">Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slot / item picker -->
+  <div class="sheet-backdrop" id="picker-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="picker-title">Choose item</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body">
+        <div class="item-grid item-grid-sm" id="picker-grid"></div>
+        <div id="picker-empty" class="empty" hidden></div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn" id="picker-clear">Clear slot</button>
+        <span class="grow"></span>
+        <button type="button" class="btn btn-primary" id="picker-done">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save outfit -->
+  <div class="sheet-backdrop" id="outfit-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="outfit-modal-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="outfit-modal-title">Save outfit</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <form id="outfit-form" class="sheet-body" autocomplete="off">
+        <input type="hidden" id="outfit-id" name="id">
+        <div class="field">
+          <label class="label" for="outfit-name">Name</label>
+          <input type="text" id="outfit-name" name="name" required maxlength="60" placeholder="Friday Client Lunch">
+        </div>
+        <div class="field">
+          <label class="label" for="outfit-occasion">Occasion</label>
+          <select id="outfit-occasion" name="occasion">
+            <option value="casual">Casual</option>
+            <option value="work">Work</option>
+            <option value="date">Date</option>
+            <option value="formal">Formal</option>
+            <option value="athletic">Athletic</option>
+            <option value="travel">Travel</option>
+            <option value="party">Party</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="outfit-folder">Folder</label>
+          <select id="outfit-folder" name="folderId">
+            <option value="">Unfiled</option>
+          </select>
+        </div>
+        <div class="field" id="outfit-new-folder-wrap">
+          <label class="label" for="outfit-new-folder">Or create a new folder</label>
+          <input type="text" id="outfit-new-folder" name="newFolder" maxlength="40" placeholder="Work Week">
+        </div>
+        <div class="sheet-foot">
+          <span class="grow"></span>
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Save outfit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Outfit actions (card menu) / day picker -->
+  <div class="sheet-backdrop" id="outfit-menu-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="outfit-menu-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="outfit-menu-title">Outfit</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body" id="outfit-menu-body"></div>
+    </div>
+  </div>
+
+  <div class="sheet-backdrop" id="day-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="day-modal-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="day-modal-title">Plan day</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body">
+        <div class="outfit-pick-list" id="day-outfit-list"></div>
+        <div id="day-empty" class="empty" hidden>No saved outfits yet.</div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn btn-danger" id="day-remove" hidden>Remove outfit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="sheet-backdrop" id="settings-modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">&times;</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <label class="label" for="pref-units">Temperature units</label>
+          <select id="pref-units">
+            <option value="C">Celsius</option>
+            <option value="F">Fahrenheit</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="pref-vibe">Default vibe</label>
+          <select id="pref-vibe">
+            <option value="relaxed">Relaxed</option>
+            <option value="balanced">Balanced</option>
+            <option value="polished">Polished</option>
+            <option value="minimal">Minimal</option>
+            <option value="bold">Bold</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="pref-time">Daily suggestion time</label>
+          <input type="time" id="pref-time" value="08:00">
+        </div>
+        <hr class="rule">
+        <h3 class="sub-title">Your data</h3>
+        <p class="muted small">Everything is stored in this browser. Export a backup before clearing site data.</p>
+        <div class="btn-row">
+          <button type="button" class="btn" id="settings-export">Export JSON</button>
+          <label class="btn file-btn" for="settings-import">Import JSON</label>
+          <input type="file" id="settings-import" accept="application/json,.json" class="visually-hidden">
+        </div>
+        <p class="muted small" id="settings-storage"></p>
+        <hr class="rule">
+        <button type="button" class="btn btn-danger btn-block" id="settings-reset">Reset to starter wardrobe</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm -->
+  <div class="sheet-backdrop sheet-center" id="confirm-modal" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-text" class="muted"></p>
+      <div class="btn-row btn-row-end">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt (rename etc.) -->
+  <div class="sheet-backdrop sheet-center" id="prompt-modal" hidden>
+    <form class="dialog" id="prompt-form" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+      <h2 id="prompt-title">Name</h2>
+      <input type="text" id="prompt-input" maxlength="60" required aria-labelledby="prompt-title">
+      <div class="btn-row btn-row-end">
+        <button type="button" class="btn" id="prompt-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">OK</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast-region" id="toasts" role="status" aria-live="polite"></div>
+</div>
+
+<script src="app.js" defer></script>
+</body>
+</html>
