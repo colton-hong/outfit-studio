@@ -1,3 +1,4 @@
+/* Outfit Studio v2.1 */
 /* Outfit Studio — app.js
  * Vanilla JS, no build. Implements DESIGN.md against the IDs/classes in index.html.
  * Sections: utils, storage/state, color + scoring engine, ui helpers (toast/modal/dialogs),
@@ -178,7 +179,7 @@ function normalizeItem(r) {
     tags: Array.isArray(r.tags) ? r.tags.map(t => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 20) : [],
     notes: String(r.notes || '').slice(0, 300),
     photo: safePhoto(r.photo),
-    source: ['seed', 'upload', 'rate'].includes(r.source) ? r.source : 'upload',
+    source: ['seed', 'upload', 'rate', 'scan'].includes(r.source) ? r.source : 'upload',
     createdAt: Number(r.createdAt) || Date.now()
   };
   // optional cut-out fields (older items have neither)
@@ -245,16 +246,57 @@ function readStorage() {
     return null;
   }
 }
-function persist() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); return true; }
-  catch (e) {
-    if (!storageWarned) {
-      storageWarned = true;
-      toast('Could not save: storage is full or blocked. Try removing photos.', true);
-      setTimeout(() => { storageWarned = false; }, 8000);
+function persist(quiet) {
+  let ok = false;
+  try {
+    const str = JSON.stringify(state);
+    localStorage.setItem(KEY, str);
+    const back = localStorage.getItem(KEY);
+    if (typeof back === 'string' && Math.abs(back.length - str.length) <= str.length * 0.01) {
+      JSON.parse(back);
+      ok = true;
     }
-    return false;
+  } catch (e) { ok = false; }
+  if (!ok && !quiet && !storageWarned) {
+    storageWarned = true;
+    toast('Could not save: storage is full or blocked. Try removing photos.', true);
+    setTimeout(() => { storageWarned = false; }, 8000);
   }
+  return ok;
+}
+/* True if the stored state contains every id (and, when expectPhotos, each with a photo). */
+function verifyStored(ids, expectPhotos) {
+  try {
+    const st = JSON.parse(localStorage.getItem(KEY));
+    return ids.every(id => {
+      const it = (st.items || []).find(x => x && x.id === id);
+      return !!it && (!expectPhotos || (typeof it.photo === 'string' && it.photo.length > 20));
+    });
+  } catch (e) { return false; }
+}
+function loadImg(url) {
+  return new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = url; });
+}
+/* Persist; on failure shrink photos of the given new/edited items to small JPEGs and retry once, then strip photos as a last resort. */
+async function persistWithPhotoFallback(ids) {
+  if (persist(true)) return { ok: true, shrunk: false, stripped: false };
+  const items = ids.map(getItem).filter(it => it && it.photo);
+  for (const it of items) {
+    try {
+      const im = await loadImg(it.photoOriginal || it.photo);
+      if (!im) continue;
+      const cv = document.createElement('canvas'); cv.width = im.naturalWidth || im.width; cv.height = im.naturalHeight || im.height;
+      cv.getContext('2d').drawImage(im, 0, 0);
+      it.photo = jpegFromCanvas(cv, 440, 0.78, CARD_BG);
+      delete it.cutout; delete it.photoOriginal;
+    } catch (e) { /* keep as is */ }
+  }
+  if (persist(true)) return { ok: true, shrunk: true, stripped: false };
+  items.forEach(it => { it.photo = null; delete it.cutout; delete it.photoOriginal; });
+  const ok = persist(true);
+  if (items.length) toast('Storage full — the items were added without photos', true);
+  else if (!ok) toast('Could not save: storage is full or blocked.', true);
+  return { ok, shrunk: true, stripped: items.length > 0 };
 }
 
 function emptySlots() { return { top: [], bottom: [], dress: [], outerwear: [], shoes: [], accessory: [] }; }
@@ -757,8 +799,68 @@ function findComponents(mask, w, h, minArea) {
   out.sort((a, b) => b.area - a.area);
   return out;
 }
+/* Cluster a (component) mask by color and split touching garments. Returns bboxes (each with .mask sub-mask and .area) or null. */
+function splitByColor(data, w, h, mask) {
+  const n = w * h;
+  if (!mask || !(n > 0) || !data || data.length < n * 4) return null;
+  const binOf = p => ((data[p * 4] >> 5) << 6) | ((data[p * 4 + 1] >> 5) << 3) | (data[p * 4 + 2] >> 5);
+  const cnt = new Int32Array(512), sr = new Float64Array(512), sg = new Float64Array(512), sb = new Float64Array(512);
+  let fg = 0;
+  for (let p = 0; p < n; p++) {
+    if (!mask[p]) continue;
+    const b = binOf(p); cnt[b]++; sr[b] += data[p * 4]; sg[b] += data[p * 4 + 1]; sb[b] += data[p * 4 + 2]; fg++;
+  }
+  if (!fg) return null;
+  const cl = [];
+  for (let b = 0; b < 512; b++) if (cnt[b] >= fg * 0.12) cl.push({ bin: b, r: sr[b] / cnt[b], g: sg[b] / cnt[b], b2: sb[b] / cnt[b] });
+  if (cl.length < 2 || cl.length > 4) return null;
+  const owner = new Int8Array(512).fill(-1);
+  cl.forEach((c, i) => { owner[c.bin] = i; });
+  const subs = cl.map(() => new Uint8Array(n));
+  for (let p = 0; p < n; p++) {
+    if (!mask[p]) continue;
+    let k = owner[binOf(p)];
+    if (k < 0) {
+      let best = Infinity;
+      for (let i = 0; i < cl.length; i++) {
+        const dr = data[p * 4] - cl[i].r, dg = data[p * 4 + 1] - cl[i].g, db = data[p * 4 + 2] - cl[i].b2, d = dr * dr + dg * dg + db * db;
+        if (d < best) { best = d; k = i; }
+      }
+    }
+    subs[k][p] = 255;
+  }
+  const minA = Math.round(n * 0.025), pieces = [];
+  let covered = 0;
+  subs.forEach(sm => {
+    const comps = findComponents(sm, w, h, minA);
+    if (comps.length && comps[0].area >= minA) { const c = comps[0]; c.mask = sm; pieces.push(c); covered += c.area; }
+  });
+  if (pieces.length < 2 || covered < fg * 0.7) return null;
+  pieces.sort((a, b) => a.x - b.x);
+  return pieces;
+}
+/* Pick which encoding of a cut-out to store: small WebP, else small PNG, else a JPEG composite on the card backdrop. */
+function chooseCutoutEncoding(webpUrl, pngUrl, jpegUrl) {
+  if (typeof webpUrl === 'string' && webpUrl.indexOf('data:image/webp') === 0 && webpUrl.length <= 400000) return webpUrl;
+  if (typeof pngUrl === 'string' && pngUrl.length <= 400000) return pngUrl;
+  return jpegUrl;
+}
 /* END-SEGMENTATION-CORE */
 
+const CARD_BG = '#efe9e0', CUTOUT_MAX = 520;
+function jpegFromCanvas(src, max, q, bg) {
+  const sc = Math.min(1, max / Math.max(src.width, src.height));
+  const w = Math.max(1, Math.round(src.width * sc)), h = Math.max(1, Math.round(src.height * sc));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d'); cx.fillStyle = bg || '#ffffff'; cx.fillRect(0, 0, w, h); cx.drawImage(src, 0, 0, w, h);
+  return cv.toDataURL('image/jpeg', q);
+}
+function encodeCutoutCanvas(out) {
+  const webp = out.toDataURL('image/webp', 0.88), png = out.toDataURL('image/png');
+  const jpeg = jpegFromCanvas(out, 100000, 0.82, CARD_BG);
+  const dataUrl = chooseCutoutEncoding(webp, png, jpeg);
+  return { dataUrl, isJpeg: dataUrl === jpeg && dataUrl !== webp && dataUrl !== png };
+}
 const CUTOUT_MIN_FG = 0.04, CUTOUT_MAX_FG = 0.93;
 function makeCutout(src) {
   try {
@@ -781,7 +883,7 @@ function makeCutout(src) {
     const padX = Math.round((x1 - x0 + 1) * 0.04), padY = Math.round((y1 - y0 + 1) * 0.04);
     x0 = Math.max(0, x0 - padX); y0 = Math.max(0, y0 - padY); x1 = Math.min(w - 1, x1 + padX); y1 = Math.min(h - 1, y1 + padY);
     const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
-    const os = Math.min(1, 560 / Math.max(cw, ch));
+    const os = Math.min(1, CUTOUT_MAX / Math.max(cw, ch));
     const ow = Math.max(1, Math.round(cw * os)), oh = Math.max(1, Math.round(ch * os));
     const out = document.createElement('canvas'); out.width = ow; out.height = oh;
     const ox = out.getContext('2d');
@@ -805,15 +907,14 @@ function makeCutout(src) {
       px[(y * ow + x) * 4 + 3] = Math.round(s / c);
     }
     ox.putImageData(img, 0, 0);
-    let dataUrl = out.toDataURL('image/webp', 0.88);
-    if (!dataUrl.startsWith('data:image/webp')) dataUrl = out.toDataURL('image/png');
-    return { dataUrl, color };
+    const enc = encodeCutoutCanvas(out);
+    return { dataUrl: enc.dataUrl, color, isJpeg: enc.isJpeg };
   } catch (e) { return null; }
 }
-try { window.__outfitImg = { segmentForeground, dominantColor, findComponents }; } catch (e) { /* non-browser */ }
+try { window.__outfitImg = { segmentForeground, dominantColor, findComponents, splitByColor, chooseCutoutEncoding }; } catch (e) { /* non-browser */ }
 
 /* ---- Flat-lay scan: one photo -> several cutouts ---- */
-const scan = { canvas: null, pieces: [], busy: false };
+const scan = { canvas: null, pieces: [], busy: false, data: null, mask: null, w: 0, h: 0 };
 function scanCutout(work, data, w, h, mask, c) {
   const padX = Math.round(c.w * 0.04), padY = Math.round(c.h * 0.04);
   const x0 = Math.max(0, c.x - padX), y0 = Math.max(0, c.y - padY);
@@ -837,7 +938,7 @@ function scanCutout(work, data, w, h, mask, c) {
       local[li] = 1; lstack.push(ny * w + nx);
     }
   }
-  const os = Math.min(1, 560 / Math.max(cw, ch));
+  const os = Math.min(1, CUTOUT_MAX / Math.max(cw, ch));
   const ow = Math.max(1, Math.round(cw * os)), oh = Math.max(1, Math.round(ch * os));
   const out = document.createElement('canvas'); out.width = ow; out.height = oh;
   const ox = out.getContext('2d');
@@ -857,27 +958,83 @@ function scanCutout(work, data, w, h, mask, c) {
     px[(y * ow + x) * 4 + 3] = Math.round(s / n);
   }
   ox.putImageData(img, 0, 0);
-  let dataUrl = out.toDataURL('image/webp', 0.88);
-  if (!dataUrl.startsWith('data:image/webp')) dataUrl = out.toDataURL('image/png');
+  const enc = encodeCutoutCanvas(out);
   const color = dominantColor(data, w, h, local.length ? (() => { const m2 = new Uint8Array(w * h); for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (local[y * cw + x]) m2[(y0 + y) * w + x0 + x] = 255; return m2; })() : mask);
-  return { dataUrl, color, bw: c.w, bh: c.h };
+  return { dataUrl: enc.dataUrl, isJpeg: enc.isJpeg, color, bw: c.w, bh: c.h, bbox: { x: c.x, y: c.y, w: c.w, h: c.h } };
 }
 function scanGuessCategory(p) {
   if (p.bh > p.bw * 1.25) return 'bottom';
   if (Math.max(p.bw, p.bh) < 0.25 * Math.max(scan.canvas.width, scan.canvas.height) && p.bw / p.bh < 1.25 && p.bh / p.bw < 1.25) return 'accessory';
   return 'top';
 }
+function scanCompMask(mask, w, h, c) {
+  // pixels of the single 4-connected component containing the first foreground pixel of bbox c
+  const out = new Uint8Array(w * h);
+  let seed = -1;
+  for (let y = c.y; y < c.y + c.h && seed < 0; y++) for (let x = c.x; x < c.x + c.w; x++) if (mask[y * w + x]) { seed = y * w + x; break; }
+  if (seed < 0) return out;
+  const st = [seed]; out[seed] = 255;
+  while (st.length) {
+    const p = st.pop(), x = p % w;
+    if (x > 0 && mask[p - 1] && !out[p - 1]) { out[p - 1] = 255; st.push(p - 1); }
+    if (x < w - 1 && mask[p + 1] && !out[p + 1]) { out[p + 1] = 255; st.push(p + 1); }
+    if (p >= w && mask[p - w] && !out[p - w]) { out[p - w] = 255; st.push(p - w); }
+    if (p < w * h - w && mask[p + w] && !out[p + w]) { out[p + w] = 255; st.push(p + w); }
+  }
+  return out;
+}
 function scanDetect(scale) {
   const src = scan.canvas, w = src.width, h = src.height;
   const data = src.getContext('2d').getImageData(0, 0, w, h).data;
   const seg = segmentForeground(data, w, h, { thresholdScale: scale });
+  scan.data = data; scan.mask = seg.mask; scan.w = w; scan.h = h;
   const total = w * h;
-  const comps = findComponents(seg.mask, w, h, Math.round(total * 0.012)).filter(c => c.area <= total * 0.7).slice(0, 12);
+  const comps = findComponents(seg.mask, w, h, Math.round(total * 0.012)).slice(0, 12);
   const pieces = [];
-  comps.forEach(c => { const cut = scanCutout(src, data, w, h, seg.mask, c); if (cut) pieces.push(cut); });
-  pieces.sort((a, b) => 0);
+  comps.forEach(c => {
+    if (c.area > total * 0.18) {
+      let parts = null;
+      try { parts = splitByColor(data, w, h, scanCompMask(seg.mask, w, h, c)); } catch (e) { parts = null; }
+      if (parts) {
+        parts.forEach(pt => { const cut = scanCutout(src, data, w, h, pt.mask, pt); if (cut) pieces.push(cut); });
+        return;
+      }
+    }
+    if (c.area > total * 0.7) return;
+    const cut = scanCutout(src, data, w, h, seg.mask, c); if (cut) pieces.push(cut);
+  });
   return pieces;
 }
+/* Manual split of piece i into equal parts. mode: 'v2' | 'v3' (side-by-side), 'h2' (stacked). */
+function scanSplitPiece(i, mode) {
+  const p = scan.pieces[i]; if (!p || !p.bbox || !scan.mask) return;
+  const b = p.bbox, w = scan.w, h = scan.h, k = mode === 'v3' ? 3 : 2, vertical = mode !== 'h2';
+  const out = [];
+  for (let j = 0; j < k; j++) {
+    const px0 = vertical ? b.x + Math.round(b.w * j / k) : b.x, px1 = vertical ? b.x + Math.round(b.w * (j + 1) / k) : b.x + b.w;
+    const py0 = vertical ? b.y : b.y + Math.round(b.h * j / k), py1 = vertical ? b.y + b.h : b.y + Math.round(b.h * (j + 1) / k);
+    const m = new Uint8Array(w * h);
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = py0; y < py1 && y < h; y++) for (let x = px0; x < px1 && x < w; x++) {
+      if (scan.mask[y * w + x]) { m[y * w + x] = 255; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 < 0 || (x1 - x0 + 1) * (y1 - y0 + 1) < w * h * 0.005) continue;
+    const cut = scanCutout(scan.canvas, scan.data, w, h, m, { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
+    if (cut) { cut.name = (p.name || scanDefaultName(p, i)) + ' ' + (out.length + 1); cut.cat = p.cat; cut.form = p.form; out.push(cut); }
+  }
+  if (!out.length) { toast('No separate piece found in that part', true); scanRender(); return; }
+  scan.pieces.splice(i, 1, ...out);
+  scanRender();
+}
+function scanSyncCards() {
+  $$('#scan-cards .scan-card').forEach(card => {
+    const p = scan.pieces[Number(card.dataset.i)]; if (!p) return;
+    p.name = card.querySelector('.scan-name').value; p.cat = card.querySelector('.scan-cat').value;
+    p.color = safeColor(card.querySelector('.scan-color').value); p.form = card.querySelector('.scan-form').value;
+    p.inc = card.querySelector('.scan-inc').checked;
+  });
+}
+function scanDefaultName(p, i) { const fam = familyOf(p.color); return fam[0].toUpperCase() + fam.slice(1) + ' piece ' + (i + 1); }
 function scanSetStep(step) {
   ['intro', 'busy', 'review', 'empty'].forEach(s => { $('#scan-step-' + s).hidden = s !== step; });
 }
@@ -895,18 +1052,25 @@ function scanRender() {
   scanSetStep('review');
   const catOpts = sel => CATS.map(c => '<option value="' + c + '"' + (c === sel ? ' selected' : '') + '>' + c[0].toUpperCase() + c.slice(1) + '</option>').join('');
   $('#scan-count').textContent = scan.pieces.length + (scan.pieces.length === 1 ? ' piece found' : ' pieces found');
+  const hint = $('#scan-onlyone');
+  if (hint) {
+    const p0 = scan.pieces[0];
+    hint.hidden = !(scan.pieces.length === 1 && p0.bbox && p0.bbox.w * p0.bbox.h > 0.3 * scan.w * scan.h);
+  }
   $('#scan-cards').innerHTML = scan.pieces.map((p, i) => {
-    const fam = familyOf(p.color), cap = fam[0].toUpperCase() + fam.slice(1);
+    const sel = p.form ? Number(p.form) : 2;
     return '<div class="scan-card" data-i="' + i + '">' +
       '<div class="scan-thumb checker"><img src="' + esc(safePhoto(p.dataUrl) || '') + '" alt="Detected piece ' + (i + 1) + '"></div>' +
       '<div class="scan-fields">' +
-      '<label class="check scan-include"><input type="checkbox" class="scan-inc" checked> Include</label>' +
-      '<input type="text" class="scan-name" maxlength="60" value="' + esc(cap + ' piece ' + (i + 1)) + '" aria-label="Name">' +
-      '<div class="scan-row"><select class="scan-cat" aria-label="Category">' + catOpts(scanGuessCategory(p)) + '</select>' +
+      '<label class="check scan-include"><input type="checkbox" class="scan-inc"' + (p.inc === false ? '' : ' checked') + '> Include</label>' +
+      '<input type="text" class="scan-name" maxlength="60" value="' + esc(p.name || scanDefaultName(p, i)) + '" aria-label="Name">' +
+      '<div class="scan-row"><select class="scan-cat" aria-label="Category">' + catOpts(p.cat || scanGuessCategory(p)) + '</select>' +
       '<input type="color" class="scan-color" value="' + safeColor(p.color) + '" aria-label="Color"></div>' +
       '<p class="hint scan-guess">Category is a guess — change it if needed.</p>' +
       '<div class="scan-row"><label class="label label-sm" for="scan-form-' + i + '">Formality</label><select class="scan-form" id="scan-form-' + i + '">' +
-      [1, 2, 3, 4, 5].map(n => '<option value="' + n + '"' + (n === 2 ? ' selected' : '') + '>' + n + ' ' + FORMALITY_NAMES[n] + '</option>').join('') + '</select></div>' +
+      [1, 2, 3, 4, 5].map(n => '<option value="' + n + '"' + (n === sel ? ' selected' : '') + '>' + n + ' ' + FORMALITY_NAMES[n] + '</option>').join('') + '</select></div>' +
+      '<div class="scan-row"><label class="label label-sm" for="scan-split-' + i + '">Split</label><select class="scan-split" id="scan-split-' + i + '">' +
+      '<option value="">No split</option><option value="v2">2 side-by-side</option><option value="v3">3 side-by-side</option><option value="h2">2 stacked</option></select></div>' +
       '</div></div>';
   }).join('');
   scanUpdateCount();
@@ -918,7 +1082,7 @@ function scanUpdateCount() {
   b.disabled = n === 0;
 }
 function scanOpen() {
-  scan.canvas = null; scan.pieces = []; scan.busy = false;
+  scan.canvas = null; scan.pieces = []; scan.busy = false; scan.data = null; scan.mask = null;
   $('#scan-photo').value = ''; $('#scan-photo-camera').value = '';
   scanSetStep('intro'); openModal('scan-modal');
 }
@@ -938,26 +1102,36 @@ async function onScanPhoto(e) {
     scanRun(1);
   } catch (err) { toast('Could not read that image', true); scanSetStep('intro'); e.target.value = ''; }
 }
-function scanAddSelected() {
+async function scanAddSelected() {
   const cards = $$('#scan-cards .scan-card');
+  const ids = [];
   let n = 0;
   cards.forEach(card => {
     if (!card.querySelector('.scan-inc').checked) return;
     const p = scan.pieces[Number(card.dataset.i)]; if (!p) return;
     const color = safeColor(card.querySelector('.scan-color').value);
     const name = card.querySelector('.scan-name').value.trim().slice(0, 60) || 'Scanned piece';
-    state.items.push({
-      id: uid('itm'), name, category: card.querySelector('.scan-cat').value, color, colorFamily: familyOf(color),
+    const id = uid('itm');
+    const item = {
+      id, name, category: card.querySelector('.scan-cat').value, color, colorFamily: familyOf(color),
       seasons: SEASONS.slice(), formality: Number(card.querySelector('.scan-form').value) || 2, warmth: 2,
-      tags: ['flat-lay'], notes: '', photo: p.dataUrl, cutout: true, source: 'scan', createdAt: Date.now() + n
-    });
+      tags: ['flat-lay'], notes: '', photo: p.dataUrl, source: 'scan', createdAt: Date.now() + n
+    };
+    if (!p.isJpeg) item.cutout = true;
+    state.items.push(item);
+    ids.push(id);
     n++;
   });
   if (!n) return;
-  dataChanged();
+  const b = $('#scan-add'); if (b) b.disabled = true;
+  const res = await persistWithPhotoFallback(ids);
+  const photosOk = res.ok && !res.stripped && verifyStored(ids, true);
+  dataChanged(true);
   closeModal('scan-modal');
   showTab('wardrobe');
-  toast('Added ' + n + ' items from one photo');
+  if (!res.stripped) {
+    toast(photosOk ? 'Added ' + n + ' items' : 'Added ' + n + ' items — photos could not be saved (storage full)', !photosOk);
+  }
   const g = $('#wardrobe-grid'); if (g && g.scrollIntoView) g.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -1124,7 +1298,7 @@ function openItemModal(opts) {
   $('#item-name').focus();
 }
 
-function saveItemFromForm() {
+async function saveItemFromForm() {
   const name = $('#item-name').value.trim();
   if (!name) { toast('Give the item a name', true); $('#item-name').focus(); return; }
   let seasons = $$('#item-seasons input[name="seasons"]').filter(cb => cb.checked).map(cb => cb.value);
@@ -1139,21 +1313,26 @@ function saveItemFromForm() {
   };
   const usingCut = !!(itemEdit.photo && itemEdit.cutout);
   if (usingCut) { data.cutout = true; if (itemEdit.photoOriginal) data.photoOriginal = itemEdit.photoOriginal; }
+  let savedId, msg;
   if (itemEdit.editingId) {
     const it = getItem(itemEdit.editingId);
     if (it) {
       if (!usingCut) { delete it.cutout; delete it.photoOriginal; }
       Object.assign(it, data);
+      savedId = it.id;
       // category change: purge from studio/rate/outfit slots of the old category
       [studio.slots, rate.slots].forEach(s => purgeMismatched(s));
       state.outfits.forEach(o => purgeMismatched(o.slots));
     }
-    toast('Item updated');
+    msg = 'Item updated';
   } else {
-    state.items.push(Object.assign({ id: uid('itm'), source: itemEdit.source, createdAt: Date.now() }, data));
-    toast('Added ' + data.name);
+    savedId = uid('itm');
+    state.items.push(Object.assign({ id: savedId, source: itemEdit.source, createdAt: Date.now() }, data));
+    msg = 'Added ' + data.name;
   }
-  dataChanged();
+  const res = savedId ? await persistWithPhotoFallback([savedId]) : { ok: true };
+  if (!res.stripped && res.ok) toast(msg);
+  dataChanged(true);
   closeModal('item-modal');
 }
 function purgeMismatched(slots) {
@@ -2045,8 +2224,8 @@ function replaceState(next) {
 /* ======================================================================
  * 15. Data-changed refresh + event wiring
  * ==================================================================== */
-function dataChanged() {
-  persist();
+function dataChanged(skipPersist) {
+  if (!skipPersist) persist();
   todayDirty = true;
   $('#wardrobe-count').textContent = state.items.length;
   if (currentTab === 'today') { runToday(false); renderWeek(); }
@@ -2097,7 +2276,13 @@ function bind() {
   $('#scan-photo').addEventListener('change', onScanPhoto);
   $('#scan-photo-camera').addEventListener('change', onScanPhoto);
   $('#scan-photo-take').addEventListener('click', () => $('#scan-photo-camera').click());
-  $('#scan-cards').addEventListener('change', e => { if (e.target.classList.contains('scan-inc')) scanUpdateCount(); });
+  $('#scan-cards').addEventListener('change', e => {
+    if (e.target.classList.contains('scan-inc')) scanUpdateCount();
+    if (e.target.classList.contains('scan-split') && e.target.value) {
+      const card = e.target.closest('.scan-card'); const mode = e.target.value;
+      scanSyncCards(); scanSplitPiece(Number(card.dataset.i), mode);
+    }
+  });
   $('#scan-add').addEventListener('click', scanAddSelected);
   $('#scan-more').addEventListener('click', () => scanRun(0.8));
   $('#scan-less').addEventListener('click', () => scanRun(1.25));
@@ -2129,8 +2314,12 @@ function bind() {
     try {
       const r = await processImage(f);
       const cut = makeCutout(r.canvas);
-      if (cut) {
-        itemEdit.photoOriginal = r.dataUrl; itemEdit.cutoutUrl = cut.dataUrl; itemEdit.cutout = true;
+      if (cut && cut.isJpeg) {
+        // photo is already the JPEG composite on the card backdrop: no transparent cut-out, no big original
+        itemEdit.photoOriginal = null; itemEdit.cutoutUrl = null; itemEdit.cutout = false;
+        itemEdit.photo = cut.dataUrl; itemEdit.note = '';
+      } else if (cut) {
+        itemEdit.photoOriginal = jpegFromCanvas(r.canvas, 480, 0.7); itemEdit.cutoutUrl = cut.dataUrl; itemEdit.cutout = true;
         itemEdit.photo = cut.dataUrl; itemEdit.note = '';
       } else {
         itemEdit.photoOriginal = null; itemEdit.cutoutUrl = null; itemEdit.cutout = false;
@@ -2287,7 +2476,7 @@ function bind() {
     try {
       const r = await processImage(f);
       const cut = makeCutout(r.canvas);
-      ratePhoto = cut ? { dataUrl: cut.dataUrl, color: cut.color, original: r.dataUrl, cutout: true } : { dataUrl: r.dataUrl, color: r.color, original: null, cutout: false };
+      ratePhoto = cut ? { dataUrl: cut.dataUrl, color: cut.color, original: cut.isJpeg ? null : jpegFromCanvas(r.canvas, 480, 0.7), cutout: !cut.isJpeg } : { dataUrl: r.dataUrl, color: r.color, original: null, cutout: false };
       $('#rate-photo-img').src = ratePhoto.dataUrl;
       $('#rate-photo-preview').classList.toggle('is-cutout', ratePhoto.cutout);
       $('#rate-photo-preview').hidden = false;
